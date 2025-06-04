@@ -7,7 +7,7 @@ from joblib import Parallel, delayed
 
 # global definitions and functions
 
-pd.set_option("display.max_columns", None)
+#pd.set_option("display.max_columns", None)
 #pd.set_option("display.max_rows", None)
 
 def day_nr(year: int, month: int) -> int:
@@ -35,7 +35,7 @@ def day_nr(year: int, month: int) -> int:
 anlage10_df = pd.read_stata("D:/projects/soep_rv/VSKT/help/Anlage_10.dta")
 anlage10_df = anlage10_df.rename(columns={"Jahr": "JAHR", "Monat": "MONAT"})
 
-# ordered list of zust‰nde, required for status 2 and 3
+# ordered list of zust√§nde, required for status 2 and 3
 zustand_order = ["BRF", "BMP", "VRS", "ALG", "AUF", "ARM", "PFL", "FWB", "SCH", "SON", "PMU", "USV",
                  "RTB", "HRT", "FRG", "FZR", "NJB", "AZ0", "AZ1", "ALH"]
 
@@ -54,12 +54,11 @@ def load_and_preprocess(berichtsjahr):
     print(f"Dataset loaded in {round(load_end - load_start, 3)} seconds.")
     print(f" Number of episodes: {len(df)}.")
 
-    '''
     # encode RVTS and VSGR variables:
     rtvs_dict = {"ohne Zuordnung von Entgeltpunkten: keine Rentenbezugszeit aus eigener Versicheru": 0,
-                 "ohne Zuordnung von Entgeltpunkten: Zeit w‰hrend Rentenbezug aus eigener Versich": 1,
+                 "ohne Zuordnung von Entgeltpunkten: Zeit w√§hrend Rentenbezug aus eigener Versich": 1,
                  "mit Zuordnung von Entgeltpunkten: keine Rentenbezugszeit aus eigener Versicherun": 5,
-                 "mit Zuordnung von Entgeltpunkten: Zeit w‰hrend Rentenbezug aus eigener Versiche": 6}
+                 "mit Zuordnung von Entgeltpunkten: Zeit w√§hrend Rentenbezug aus eigener Versiche": 6}
     
     vsgr_dict = {"AR, ab 2005 Allgemeine Rentenversicherung": 1,
                  "AV (bis 2004)": 2,
@@ -70,7 +69,6 @@ def load_and_preprocess(berichtsjahr):
     
     df["RTVS"] = df["RTVS"].map(rtvs_dict)
     df["VSGR"] = df["VSGR"].map(vsgr_dict)
-    '''
 
     # transform time variables into datetime objects
     df["VNZR"] = pd.to_datetime(df["VNZR"], format="%Y%m%d")
@@ -120,26 +118,26 @@ def pivot_episodes(id, data, berichtsjahr):
 
     # STATUS 1:
 
-    # dictionary for Zust‰nde - if applicable, add " & (data['Ses_frg'].isna()) " to every condition
+    # dictionary for Zust√§nde
     conditions = {
-        "WSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
-                                           'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([0, 1])),
-        "OSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
-                                           'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([5, 6])),
-        "WKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
-                                           'VSGR'].isin([5, 6])) & (data['RTVS'].isin([0, 1])),
-        "OKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
-                                           'VSGR'].isin([5, 6])) & (data['RTVS'].isin([5, 6])),
-        "ATZ_WSB": (data['BYAT'] == 9) & (data['VSGR'].isin([1, 2, 3, 4])) & (
-        data['RTVS'].isin(
-            [0, 1])),
-        "ATZ_OSB": (data['BYAT'] == 9) & (data['VSGR'].isin([1, 2, 3, 4])) & (
-        data['RTVS'].isin(
-            [5, 6])),
-        "ATZ_WKN": (data['BYAT'] == 9) & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([0, 1]),
-        "ATZ_OKN": (data['BYAT'] == 9) & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([5, 6]),
-        "WSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([0, 1]),
-        "OSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([5, 6])}
+		"WSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
+			'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([0, 1])),
+		"OSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
+			'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([5, 6])),
+		"WKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
+			'VSGR'].isin([5, 6])) & (data['RTVS'].isin([0, 1])),
+		"OKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
+			'VSGR'].isin([5, 6])) & (data['RTVS'].isin([5, 6])),
+		"ATZ_WSB": (data['BYAT'] == 9) & (data['Ses_frg'].isna()) & (data['VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin(
+			[0, 1])),
+		"ATZ_OSB": (data['BYAT'] == 9) & (data['Ses_frg'].isna()) & (data['VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin(
+			[5, 6])),
+		"ATZ_WKN": (data['BYAT'] == 9) & data['Ses_frg'].isna() & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([0, 1]),
+		"ATZ_OKN": (data['BYAT'] == 9) & data['Ses_frg'].isna() & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([5, 6]),
+		"WSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([0, 1]) & data[
+			'Ses_frg'].isna(),
+		"OSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([5, 6]) & data[
+			'Ses_frg'].isna()}
 
     # list to save all the df's, one per zustand
     zustand_df_liste = []
@@ -186,7 +184,7 @@ def pivot_episodes(id, data, berichtsjahr):
                     "STATUS_1_TAGE": status_tage
                 })
 
-                # calculate ZREG und EGPT per day (zust‰nde are ordered by zreg_daily)
+                # calculate ZREG und EGPT per day (zust√§nde are ordered by zreg_daily)
                 zreg_daily = row.ZREG / nr_of_days
                 egpt_daily = row.EGPT / nr_of_days
 
@@ -222,12 +220,12 @@ def pivot_episodes(id, data, berichtsjahr):
         # save result for one zustand
         zustand_df_liste.append(output_df)
 
-    # concat all output_df's = one df with data for all Zust‰nde
+    # concat all output_df's = one df with data for all Zust√§nde
     alle_zustaende_df = pd.concat(zustand_df_liste, ignore_index=True)
 
     '''
     !: can have duplicates of combos JAHR, MONAT. in this case we keep only the contribution with max ZREG_tag,
-    other zust‰nde enter the calculation for NJB (in status 2 or 3) ...
+    other zust√§nde enter the calculation for NJB (in status 2 or 3) ...
     '''
 
     # find duplicates, keep track using "index", take the one with max ZREG_tag, save rest
@@ -250,7 +248,7 @@ def pivot_episodes(id, data, berichtsjahr):
 
     # STATUS 2 UND 3:
 
-    # encode zust‰nde
+    # encode zust√§nde
     conditions = {"BRF": (data['BYAT'] == 10) & (data['BYATSO'].isin(["1", "2", "6", "7"])),
                   "BMP": (data['BYAT'] == 90),
                   "VRS": (data['BYAT'] == 18),
@@ -270,7 +268,7 @@ def pivot_episodes(id, data, berichtsjahr):
                   "USV": (data['BYAT'].isin([2, 3])),
                   "RTB": (data['BYAT'].isin([70, 71, 72])),
                   "HRT": (data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '4'),
-                  #"FRG": (data['Ses_frg'].notna()),
+                  "FRG": (data['Ses_frg'].notna()),
                   "FZR": (data['BYAT'] == 25),
                   "AZ0": (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'] == '5') & (data['RTVS'] == 0),
                   "AZ1": (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'] == '5') & (data['RTVS'] == 1),
