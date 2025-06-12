@@ -32,7 +32,7 @@ def day_nr(year: int, month: int) -> int:
 # Loading and preprocessing:
 
 # load factors for ZREG calculations (see status 1)
-anlage10_df = pd.read_stata("D:/projects/soep_rv/VSKT/help/Anlage_10.dta")
+anlage10_df = pd.read_stata("") #TODO
 anlage10_df = anlage10_df.rename(columns={"Jahr": "JAHR", "Monat": "MONAT"})
 
 # ordered list of zustände, required for status 2 and 3
@@ -43,8 +43,8 @@ zustand_order = ["BRF", "BMP", "VRS", "ALG", "AUF", "ARM", "PFL", "FWB", "SCH", 
 def load_and_preprocess(berichtsjahr):
     load_start = time.time()
 
-    data_path = #TODO
-    file_name = #TODO
+    data_path = "" #TODO
+    file_name = "" #TODO
     
     print(f"Loading data for {berichtsjahr} from {data_path} ...")
 
@@ -74,10 +74,10 @@ def load_and_preprocess(berichtsjahr):
     df["VNZR"] = pd.to_datetime(df["VNZR"], format="%Y%m%d")
     df["BSZR"] = pd.to_datetime(df["BSZR"], format="%Y%m%d")
 
-    # group by FDZ_ID 
-    grouped_df = df.groupby("FDZ_ID")
+    # group by SOEP_ID 
+    grouped_df = df.groupby("SOEP_ID")
     id_groups = [(id,group) for id, group in grouped_df]
-    print(f" Number of unique FDZ_IDs: {len(id_groups)}.")
+    print(f" Number of unique SOEP_IDs: {len(id_groups)}.")
 
     return id_groups
 
@@ -94,9 +94,9 @@ The result is one big df per ID and these are then concatenated into the final r
 
 def pivot_episodes(id, data, berichtsjahr):
     '''
-    :param id: FDZ_ID
-    :param data: element of df.groupby("FDZ_ID")
-    :return: df in (JAHR,MONAT) format, built from all episodes of FDZ_ID
+    :param id: SOEP_ID
+    :param data: element of df.groupby("SOEP_ID")
+    :return: df in (JAHR,MONAT) format, built from all episodes of SOEP_ID
     '''
 
     # define timerange
@@ -128,12 +128,12 @@ def pivot_episodes(id, data, berichtsjahr):
 			'VSGR'].isin([5, 6])) & (data['RTVS'].isin([0, 1])),
 		"OKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
 			'VSGR'].isin([5, 6])) & (data['RTVS'].isin([5, 6])),
-		"ATZ_WSB": (data['BYAT'] == 9) & (data['Ses_frg'].isna()) & (data['VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin(
+		"ATZ WSB": (data['BYAT'] == 9) & (data['Ses_frg'].isna()) & (data['VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin(
 			[0, 1])),
-		"ATZ_OSB": (data['BYAT'] == 9) & (data['Ses_frg'].isna()) & (data['VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin(
+		"ATZ OSB": (data['BYAT'] == 9) & (data['Ses_frg'].isna()) & (data['VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin(
 			[5, 6])),
-		"ATZ_WKN": (data['BYAT'] == 9) & data['Ses_frg'].isna() & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([0, 1]),
-		"ATZ_OKN": (data['BYAT'] == 9) & data['Ses_frg'].isna() & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([5, 6]),
+		"ATZ WKN": (data['BYAT'] == 9) & data['Ses_frg'].isna() & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([0, 1]),
+		"ATZ OKN": (data['BYAT'] == 9) & data['Ses_frg'].isna() & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([5, 6]),
 		"WSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([0, 1]) & data[
 			'Ses_frg'].isna(),
 		"OSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([5, 6]) & data[
@@ -614,7 +614,7 @@ def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, be
             delayed(pivot_episodes)(id, group, berichtsjahr) for id, group in batch
         )
         result_df = pd.concat(results, ignore_index=True)
-        result_df = result_df.rename(columns={"ID": "FDZ_ID"})
+        result_df = result_df.rename(columns={"ID": "SOEP_ID"})
 
         # save each batch to disk
         file_path = destination_folder + f"episodes_pivot_part_{i}.parquet"
