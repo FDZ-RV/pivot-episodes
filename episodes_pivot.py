@@ -318,12 +318,12 @@ def pivot_episodes(id, data, berichtsjahr):
                     "STATUS_TAGE": status_tage
                 })
 
-            # calculate EGPT per day
-            egpt_daily = row.EGPT / nr_of_days
-            episode_df["STATUS_EGPT"] = episode_df["STATUS_TAGE"] * egpt_daily
+	        # calculate EGPT per day
+	        egpt_daily = row.EGPT / nr_of_days
+	        episode_df["STATUS_EGPT"] = episode_df["STATUS_TAGE"] * egpt_daily
 
-            # save in list
-            episode_df_list.append(episode_df)
+	        # save in list
+	        episode_df_list.append(episode_df)
 
             # concat all episode_df's
             output_df = pd.concat(episode_df_list, ignore_index=True)
@@ -593,8 +593,8 @@ def pivot_episodes(id, data, berichtsjahr):
 #######################################################################################################################
 
 
-# run the function for each ID in parallel:
-
+# run the function for each ID in parallel (TODO: adjust n_jobs accordingly below!):
+ 
 def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, berichtsjahr):
     '''
     :param id_groups: output of load_and_preprocess(berichtsjahr)
