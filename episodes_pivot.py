@@ -32,20 +32,20 @@ def day_nr(year: int, month: int) -> int:
 # Loading and preprocessing:
 
 # load factors for ZREG calculations (see status 1)
-anlage10_df = pd.read_stata("") #TODO
+anlage10_df = pd.read_stata("D:/projects/soep_rv/VSKT/help/Anlage_10.dta")
 anlage10_df = anlage10_df.rename(columns={"Jahr": "JAHR", "Monat": "MONAT"})
 
-# ordered list of zustände, required for status 2 and 3
-zustand_order = ["BRF", "BMP", "VRS", "ALG", "AUF", "ARM", "PFL", "FWB", "SCH", "SON", "PMU", "USV",
+# ordered list of zustände, required for status 2 and 3 
+zustand_order = ["BRF", "BMP", "VRS", "ALG", "AUF", "ARM", "PFL", "FWB",
+                 "SCH", "SON", "PMU", "USV",
                  "RTB", "HRT", "FRG", "FZR", "NJB", "AZ0", "AZ1", "ALH"]
 
 # load data
 def load_and_preprocess(berichtsjahr):
     load_start = time.time()
 
-    data_path = "" #TODO
-    file_name = "" #TODO
-    
+    data_path = "" todo: adjust
+    file_name = f"OSV.VVL.{berichtsjahr}.VAR.dta"
     print(f"Loading data for {berichtsjahr} from {data_path} ...")
 
     df = pd.read_stata(data_path + file_name, convert_categoricals=False)
@@ -54,33 +54,16 @@ def load_and_preprocess(berichtsjahr):
     print(f"Dataset loaded in {round(load_end - load_start, 3)} seconds.")
     print(f" Number of episodes: {len(df)}.")
 
-    # encode RVTS and VSGR variables:
-    rtvs_dict = {"ohne Zuordnung von Entgeltpunkten: keine Rentenbezugszeit aus eigener Versicheru": 0,
-                 "ohne Zuordnung von Entgeltpunkten: Zeit während Rentenbezug aus eigener Versich": 1,
-                 "mit Zuordnung von Entgeltpunkten: keine Rentenbezugszeit aus eigener Versicherun": 5,
-                 "mit Zuordnung von Entgeltpunkten: Zeit während Rentenbezug aus eigener Versiche": 6}
-    
-    vsgr_dict = {"AR, ab 2005 Allgemeine Rentenversicherung": 1,
-                 "AV (bis 2004)": 2,
-                 "Handwerker AR, ab 2005 Handwerker": 3,
-                 "AV (bis 2004)": 4,
-                 "KN (Arbeiter), ab 2005 Knappschaftliche Rentenversicherung": 5,
-                 "KN (Angestellter) (bis 2004)": 6}
-    
-    df["RTVS"] = df["RTVS"].map(rtvs_dict)
-    df["VSGR"] = df["VSGR"].map(vsgr_dict)
-
     # transform time variables into datetime objects
     df["VNZR"] = pd.to_datetime(df["VNZR"], format="%Y%m%d")
     df["BSZR"] = pd.to_datetime(df["BSZR"], format="%Y%m%d")
 
-    # group by SOEP_ID 
-    grouped_df = df.groupby("SOEP_ID")
+
+    # group by FDZ_ID
+    grouped_df = df.groupby("FDZ_ID")
     id_groups = [(id,group) for id, group in grouped_df]
-    print(f" Number of unique SOEP_IDs: {len(id_groups)}.")
 
     return id_groups
-
 
 
 '''
@@ -90,13 +73,13 @@ The resulting 5 df's (one per status) are then merged together (ordered by pairs
 The result is one big df per ID and these are then concatenated into the final result. 
 '''
 
-# wrap all operations in a function, so that we can parallelise at the end:
 
+# wrap all operations in a function, so that we can parallelise at the end:
 def pivot_episodes(id, data, berichtsjahr):
     '''
-    :param id: SOEP_ID
-    :param data: element of df.groupby("SOEP_ID")
-    :return: df in (JAHR,MONAT) format, built from all episodes of SOEP_ID
+    :param id: FDZ_ID
+    :param data: element of df.groupby("FDZ_ID")
+    :return: df in (JAHR,MONAT) format, built from all episodes of FDZ_ID
     '''
 
     # define timerange
@@ -118,26 +101,27 @@ def pivot_episodes(id, data, berichtsjahr):
 
     # STATUS 1:
 
-    # dictionary for Zustände
+    # dictionary for Zustände - if applicable, add " & (data['Ses_frg'].isna()) " to every condition
+
     conditions = {
-		"WSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
-			'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([0, 1])),
-		"OSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
-			'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([5, 6])),
-		"WKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
-			'VSGR'].isin([5, 6])) & (data['RTVS'].isin([0, 1])),
-		"OKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data['Ses_frg'].isna()) & (data[
-			'VSGR'].isin([5, 6])) & (data['RTVS'].isin([5, 6])),
-		"ATZ WSB": (data['BYAT'] == 9) & (data['Ses_frg'].isna()) & (data['VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin(
-			[0, 1])),
-		"ATZ OSB": (data['BYAT'] == 9) & (data['Ses_frg'].isna()) & (data['VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin(
-			[5, 6])),
-		"ATZ WKN": (data['BYAT'] == 9) & data['Ses_frg'].isna() & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([0, 1]),
-		"ATZ OKN": (data['BYAT'] == 9) & data['Ses_frg'].isna() & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([5, 6]),
-		"WSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([0, 1]) & data[
-			'Ses_frg'].isna(),
-		"OSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([5, 6]) & data[
-			'Ses_frg'].isna()}
+        "WSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
+                                           'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([0, 1])),
+        "OSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
+                                           'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([5, 6])),
+        "WKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
+                                           'VSGR'].isin([5, 6])) & (data['RTVS'].isin([0, 1])),
+        "OKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
+                                           'VSGR'].isin([5, 6])) & (data['RTVS'].isin([5, 6])),
+        "ATZ WSB": (data['BYAT'] == 9) & (data['VSGR'].isin([1, 2, 3, 4])) & (
+        data['RTVS'].isin(
+            [0, 1])),
+        "ATZ OSB": (data['BYAT'] == 9) & (data['VSGR'].isin([1, 2, 3, 4])) & (
+        data['RTVS'].isin(
+            [5, 6])),
+        "ATZ WKN": (data['BYAT'] == 9) & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([0, 1]),
+        "ATZ OKN": (data['BYAT'] == 9) & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([5, 6]),
+        "WSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([0, 1]),
+        "OSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([5, 6])}
 
     # list to save all the df's, one per zustand
     zustand_df_liste = []
@@ -260,20 +244,23 @@ def pivot_episodes(id, data, berichtsjahr):
                   "FWB": (data['BYAT'].isin([20, 21])) & (data['BYATSO'].isin(["0", "2", "5", "6", "7"])),
                   "SCH": ((data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '3')) | (
                           (data['BYAT'].isin([40, 41, 42, 43, 48])) & (data['BYATSO'].isin(["4", "6", "7", "8", 'C']))),
-                  "SON": (data['BYAT'].isin([8, 15, 16, 26, 30, 31, 49])) | (
+                  "SON": (data['BYAT'].isin([
+                                             #8,15,16, 30, 31,
+                                              26, 49])) | (
                           (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'].isin(["9", "2"]))) | (
-                                 (data['BYAT'] == 60) & (data['BYATSO'].isin(["6", "7"]))) | (
+                         #(data['BYAT'] == 60) & (data['BYATSO'].isin(["6", "7"]))) | (
                                  (data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '1')),
                   "PMU": (data['BYAT'] == 11),
                   "USV": (data['BYAT'].isin([2, 3])),
                   "RTB": (data['BYAT'].isin([70, 71, 72])),
                   "HRT": (data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '4'),
-                  "FRG": (data['Ses_frg'].notna()),
+                  #"FRG": (data['Ses_frg'].notna()),
                   "FZR": (data['BYAT'] == 25),
                   "AZ0": (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'] == '5') & (data['RTVS'] == 0),
                   "AZ1": (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'] == '5') & (data['RTVS'] == 1),
                   "ALH": (data['BYAT'] == 4) | (
-                          (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'].isin(["3", 'B', 'D'])))}
+                          (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'].isin(["3", 'B', 'D'])))
+		 }
 
     # list to save the df's generated from each zustand
     zustand_df_liste = []
@@ -318,12 +305,12 @@ def pivot_episodes(id, data, berichtsjahr):
                     "STATUS_TAGE": status_tage
                 })
 
-	        # calculate EGPT per day
-	        egpt_daily = row.EGPT / nr_of_days
-	        episode_df["STATUS_EGPT"] = episode_df["STATUS_TAGE"] * egpt_daily
+                # calculate EGPT per day
+                egpt_daily = row.EGPT / nr_of_days
+                episode_df["STATUS_EGPT"] = episode_df["STATUS_TAGE"] * egpt_daily
 
-	        # save in list
-	        episode_df_list.append(episode_df)
+                # save in list
+                episode_df_list.append(episode_df)
 
             # concat all episode_df's
             output_df = pd.concat(episode_df_list, ignore_index=True)
@@ -593,15 +580,15 @@ def pivot_episodes(id, data, berichtsjahr):
 #######################################################################################################################
 
 
-# run the function for each ID in parallel (TODO: adjust n_jobs accordingly below!):
- 
+# run the function for each ID in parallel:
+
 def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, berichtsjahr):
     '''
     :param id_groups: output of load_and_preprocess(berichtsjahr)
     :param batch_size: int (should be less than 100000)
     :param destination_folder: str
     :param berichtsjahr: int
-    :return: returns final result and saves it as #TODO to destination_folder
+    :return: returns final result and saves it as VVL_{berichtsjahr}_pivot.dta to destination_folder
     '''
 
     batches = [id_groups[i:i+batch_size] for i in range(0, len(id_groups), batch_size)]
@@ -614,7 +601,7 @@ def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, be
             delayed(pivot_episodes)(id, group, berichtsjahr) for id, group in batch
         )
         result_df = pd.concat(results, ignore_index=True)
-        result_df = result_df.rename(columns={"ID": "SOEP_ID"})
+        result_df = result_df.rename(columns={"ID": "FDZ_ID"})
 
         # save each batch to disk
         file_path = destination_folder + f"episodes_pivot_part_{i}.parquet"
@@ -640,18 +627,25 @@ def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, be
     # replace "nan" and "None" strings by nan
     final_df[['STATUS_1', 'STATUS_2', 'STATUS_3']] = final_df[['STATUS_1', 'STATUS_2', 'STATUS_3']].replace(
         ["nan","None"], "")
-    
+
+    # drop columns that are not needed
+    final_df = final_df[["FDZ_ID","JAHR","MONAT","STATUS_1","STATUS_2","STATUS_3","STATUS_4_TAGE","STATUS_5_TAGE"]]
+
+    # extract ZLNR and BRNR from FDZ_ID
+    final_df["ZLNR"] = final_df.FDZ_ID // 100
+    final_df["BRNR"] = final_df.FDZ_ID % 100
+
     # optional: downcast dtypes to save space
     final_df["JAHR"] = final_df["JAHR"].astype("int16")
     final_df["MONAT"] = final_df["MONAT"].astype("int8")
-    final_df["STATUS_4_TAGE"] = final_df["STATUS_4_TAGE"].astype("float16")
-    final_df["STATUS_5_TAGE"] = final_df["STATUS_5_TAGE"].astype("float16")
+    final_df["STATUS_4_TAGE"] = final_df["STATUS_4_TAGE"].astype("float32")
+    final_df["STATUS_5_TAGE"] = final_df["STATUS_5_TAGE"].astype("float32")
     
     # optional: fill numeric nan's by 0
     # final_df[final_df.select_dtypes(include="number").columns] = final_df.select_dtypes(include="number").fillna(0)
 
     # export result
-    save_as = #TODO
+    save_as = f"VVL_{berichtsjahr}_pivot.dta"
     final_df.to_stata(destination_folder + save_as, write_index=False)
 
     print(f"\n Output saved to {destination_folder + save_as}.")
@@ -664,14 +658,18 @@ def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, be
 
 
 start_time = time.time()
+destination_folder = "" # todo: adjust
 
-year = #TODO
-destination_folder = #TODO
-
-run_in_batches_and_save_result(id_groups=load_and_preprocess(year), batch_size=50000,
-                               destination_folder=destination_folder,berichtsjahr=year)
+run_in_batches_and_save_result(id_groups=load_and_preprocess(2014), batch_size=50000,
+                               destination_folder=destination_folder,berichtsjahr=2014)
 
 end_time = time.time()
 print(f" Total runtime: {int((end_time - start_time)//60)} minutes and {round((end_time - start_time)%60, 3)} seconds.")
+
+
+end_time = time.time()
+print(f" Total runtime: {int((end_time - start_time)//60)} minutes and {round((end_time - start_time)%60, 3)} seconds.")
+
+
 
 
