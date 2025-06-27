@@ -2,6 +2,7 @@ import pandas as pd
 import time
 from joblib import Parallel, delayed
 
+
 #######################################################################################################################
 
 
@@ -57,7 +58,6 @@ def load_and_preprocess(berichtsjahr):
     # transform time variables into datetime objects
     df["VNZR"] = pd.to_datetime(df["VNZR"], format="%Y%m%d")
     df["BSZR"] = pd.to_datetime(df["BSZR"], format="%Y%m%d")
-
 
     # group by FDZ_ID
     grouped_df = df.groupby("FDZ_ID")
@@ -254,7 +254,7 @@ def pivot_episodes(id, data, berichtsjahr):
                   "USV": (data['BYAT'].isin([2, 3])),
                   "RTB": (data['BYAT'].isin([70, 71, 72])),
                   "HRT": (data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '4'),
-                  #"FRG": (data['Ses_frg'].notna()),
+                  #"FRG": ((data['KZSO'].notna()) & (data['KZSO'] != 0), # todo: may need some finetuning!
                   "FZR": (data['BYAT'] == 25),
                   "AZ0": (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'] == '5') & (data['RTVS'] == 0),
                   "AZ1": (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'] == '5') & (data['RTVS'] == 1),
@@ -628,13 +628,6 @@ def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, be
     final_df[['STATUS_1', 'STATUS_2', 'STATUS_3']] = final_df[['STATUS_1', 'STATUS_2', 'STATUS_3']].replace(
         ["nan","None"], "")
 
-    # drop columns that are not needed
-    final_df = final_df[["FDZ_ID","JAHR","MONAT","STATUS_1","STATUS_2","STATUS_3","STATUS_4_TAGE","STATUS_5_TAGE"]]
-
-    # extract ZLNR and BRNR from FDZ_ID
-    final_df["ZLNR"] = final_df.FDZ_ID // 100
-    final_df["BRNR"] = final_df.FDZ_ID % 100
-
     # optional: downcast dtypes to save space
     final_df["JAHR"] = final_df["JAHR"].astype("int16")
     final_df["MONAT"] = final_df["MONAT"].astype("int8")
@@ -655,20 +648,6 @@ def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, be
 
 #######################################################################################################################
 
-
-
-start_time = time.time()
-destination_folder = "" # todo: adjust
-
-run_in_batches_and_save_result(id_groups=load_and_preprocess(2014), batch_size=50000,
-                               destination_folder=destination_folder,berichtsjahr=2014)
-
-end_time = time.time()
-print(f" Total runtime: {int((end_time - start_time)//60)} minutes and {round((end_time - start_time)%60, 3)} seconds.")
-
-
-end_time = time.time()
-print(f" Total runtime: {int((end_time - start_time)//60)} minutes and {round((end_time - start_time)%60, 3)} seconds.")
 
 
 
