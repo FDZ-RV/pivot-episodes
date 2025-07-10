@@ -244,11 +244,9 @@ def pivot_episodes(id, data, berichtsjahr):
                   "FWB": (data['BYAT'].isin([20, 21])) & (data['BYATSO'].isin(["0", "2", "5", "6", "7"])),
                   "SCH": ((data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '3')) | (
                           (data['BYAT'].isin([40, 41, 42, 43, 48])) & (data['BYATSO'].isin(["4", "6", "7", "8", 'C']))),
-                  "SON": (data['BYAT'].isin([
-                                             #8,15,16, 30, 31,
-                                              26, 49])) | (
-                          (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'].isin(["9", "2"]))) | (
-                         #(data['BYAT'] == 60) & (data['BYATSO'].isin(["6", "7"]))) | (
+                  "SON": (data['BYAT'].isin([8,15,16, 30, 31,26, 49])) | (
+			  (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'].isin(["9", "2"]))) | (
+                         (data['BYAT'] == 60) & (data['BYATSO'].isin(["6", "7"]))) | (
                                  (data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '1')),
                   "PMU": (data['BYAT'] == 11),
                   "USV": (data['BYAT'].isin([2, 3])),
