@@ -184,7 +184,7 @@ def pivot_episodes(id, data, berichtsjahr):
             output_df = pd.concat(episode_df_list, ignore_index=True)
 
             # adjust ZREG values by anlage10_df
-            if zustand in {"OSB", "OKN", "OSS", "ATZ_OSB", "ATZ_OKN"}:
+            if zustand in {"OSB", "OKN", "OSS", "ATZ OSB", "ATZ OKN"}:
                 output_df = pd.merge(output_df, anlage10_df, on=["JAHR", "MONAT"], how="left")
                 output_df[["STATUS_1_ZREG", "ZREG_tag"]] = output_df[["STATUS_1_ZREG", "ZREG_tag"]].divide(
                     output_df["ANLAGE_10"], axis=0)
