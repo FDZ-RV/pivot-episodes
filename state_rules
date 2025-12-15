@@ -1,0 +1,185 @@
+import polars as pl
+
+# global definitions and functions
+
+conditions_new: dict[str, pl.Expr] = {
+    "WSB": (
+        (pl.col("BYAT") == 10)
+        & (pl.col("BYATSO").is_in(["0", "3", "4", "5", "8", "9"]))
+        & (pl.col("VSGR").is_in([1, 2, 3, 4]))
+        & (pl.col("RTVS").is_in([0, 1]))
+        & (pl.col("Ses_frg").is_null())
+    ),
+    "OSB": (
+        (pl.col("BYAT") == 10)
+        & (pl.col("BYATSO").is_in(["0", "3", "4", "5", "8", "9"]))
+        & (pl.col("VSGR").is_in([1, 2, 3, 4]))
+        & (pl.col("RTVS").is_in([5, 6]))
+        & (pl.col("Ses_frg").is_null())
+    ),
+    "FRG WSB": (
+            (pl.col("BYAT") == 10)
+            & (pl.col("BYATSO").is_in(["0", "3", "4", "5", "8", "9"]))
+            & (pl.col("VSGR").is_in([1, 2, 3, 4]))
+            & (pl.col("RTVS").is_in([0, 1]))
+            & (pl.col("Ses_frg").is_not_null())
+    ),
+    "FRG OSB": (
+            (pl.col("BYAT") == 10)
+            & (pl.col("BYATSO").is_in(["0", "3", "4", "5", "8", "9"]))
+            & (pl.col("VSGR").is_in([1, 2, 3, 4]))
+            & (pl.col("RTVS").is_in([5, 6]))
+            & (pl.col("Ses_frg").is_not_null())
+    ),
+    "WKN": (
+        (pl.col("BYAT") == 10)
+        & (pl.col("BYATSO").is_in(["0", "3", "4", "5", "8", "9"]))
+        & (pl.col("VSGR").is_in([5, 6]))
+        & (pl.col("RTVS").is_in([0, 1]))
+    ),
+    "OKN": (
+        (pl.col("BYAT") == 10)
+        & (pl.col("BYATSO").is_in(["0", "3", "4", "5", "8", "9"]))
+        & (pl.col("VSGR").is_in([5, 6]))
+        & (pl.col("RTVS").is_in([5, 6]))
+    ),
+    "ATZ WSB": (
+        (pl.col("BYAT") == 9)
+        & (pl.col("VSGR").is_in([1, 2, 3, 4]))
+        & (pl.col("RTVS").is_in([0, 1]))
+    ),
+    "ATZ OSB": (
+        (pl.col("BYAT") == 9)
+        & (pl.col("VSGR").is_in([1, 2, 3, 4]))
+        & (pl.col("RTVS").is_in([5, 6]))
+    ),
+    "ATZ WKN": (
+        (pl.col("BYAT") == 9)
+        & (pl.col("VSGR").is_in([5, 6]))
+        & (pl.col("RTVS").is_in([0, 1]))
+    ),
+    "ATZ OKN": (
+        (pl.col("BYAT") == 9)
+        & (pl.col("VSGR").is_in([5, 6]))
+        & (pl.col("RTVS").is_in([5, 6]))
+    ),
+    "WSS": (
+        (pl.col("BYAT") == 17)
+        & (pl.col("VSGR").is_in([1, 2, 3, 4]))
+        & (pl.col("RTVS").is_in([0, 1]))
+    ),
+    "OSS": (
+        (pl.col("BYAT") == 17)
+        & (pl.col("VSGR").is_in([1, 2, 3, 4]))
+        & (pl.col("RTVS").is_in([5, 6]))
+    ),
+    "BRF": (
+        (pl.col("BYAT") == 10)
+        & (pl.col("BYATSO").is_in(["1", "2", "6", "7"]))
+        & (pl.col("Ses_frg").is_null())
+    ),
+    "BMP": (pl.col("BYAT") == 90),
+    "VRS": (pl.col("BYAT") == 18),
+    "ALG": (pl.col("BYAT") == 13),
+    "AUF": (
+        (pl.col("BYAT") == 12)
+        | (
+            pl.col("BYAT").is_in([40, 41, 48])
+            & pl.col("BYATSO").is_in(["1", "A"])
+        )
+    ),
+    "ARM": ((pl.col("BYAT") == 14)
+        & (pl.col("Ses_frg").is_null())),
+    "PFL": (
+        (pl.col("BYAT") == 7)
+        | ((pl.col("BYAT") == 60) & (pl.col("BYATSO") == "2"))
+        | (
+            pl.col("BYAT").is_in([20, 21])
+            & (pl.col("BYATSO") == "8")
+        )
+    ),
+    "FWB": (
+        pl.col("BYAT").is_in([20, 21])
+        & pl.col("BYATSO").is_in(["0", "2", "5", "6", "7"])
+    ),
+    "SCH": (
+        (
+            pl.col("BYAT").is_in([20, 21])
+            & (pl.col("BYATSO") == "3")
+        )
+        | (
+            pl.col("BYAT").is_in([40, 41, 42, 43, 48])
+            & pl.col("BYATSO").is_in(["4", "6", "7", "8", "C"])
+        )
+    ),
+    "SON": (
+        pl.col("BYAT").is_in([26, 49])
+        | (
+            pl.col("BYAT").is_in([40, 41, 48])
+            & pl.col("BYATSO").is_in(["9", "2"])
+        )
+        | (
+            pl.col("BYAT").is_in([20, 21])
+            & (pl.col("BYATSO") == "1")
+        )
+    ),
+    "PMU": (pl.col("BYAT") == 11),
+    "USV": (pl.col("BYAT").is_in([2, 3])),
+    "RTB": (pl.col("BYAT").is_in([70, 71, 72])),
+    "HRT": (
+        pl.col("BYAT").is_in([20, 21])
+        & (pl.col("BYATSO") == "4")
+    ),
+    "FRG BRF": (
+        (pl.col("BYAT") == 10)
+        & (pl.col("BYATSO").is_in(["1", "2", "6", "7"]))
+        & (pl.col("Ses_frg").is_not_null())
+    ),
+    "FRG ARM": (
+        (pl.col("BYAT") == 14)
+        & (pl.col("Ses_frg").is_not_null())
+    ),
+    "FZR": (pl.col("BYAT") == 25),
+    "AZ0": (
+        pl.col("BYAT").is_in([40, 41, 48])
+        & (pl.col("BYATSO") == "5")
+        & (pl.col("RTVS") == 0)
+    ),
+    "AZ1": (
+        pl.col("BYAT").is_in([40, 41, 48])
+        & (pl.col("BYATSO") == "5")
+        & (pl.col("RTVS") == 1)
+    ),
+    "ALH": (
+        (pl.col("BYAT") == 4)
+        | (
+            pl.col("BYAT").is_in([40, 41, 48])
+            & pl.col("BYATSO").is_in(["3", "B", "D"])
+        )
+    ),
+    # new states, former included in SON:
+    "NVE": (pl.col("BYAT") == 15),
+    "NVF": (pl.col("BYAT") == 16),
+    "BUS": (
+        (pl.col("BYAT") == 60)
+        & pl.col("BYATSO").is_in(["6", "7"])
+    ),
+    "ESZ": (pl.col("BYAT").is_in([30, 31])),
+    "PBB": (pl.col("BYAT") == 8),
+    # Minijobs
+    "GF0": (pl.col("BYAT") == 5),
+    "GF1": (pl.col("BYAT") == 6),
+}
+
+
+
+# ordered list of states, required for status 2 and 3
+state_order_new = ["BRF", "BMP", "VRS", "ALG", "AUF", "ARM", "PFL", "FWB", "SCH", "SON", "PMU", "USV",
+                 "RTB", "HRT", "FRG BRF", "FRG ARM", "FZR",
+                   # split NJB / NJ1 and NJ2 into specific states
+                 "NJB WSB", "NJB OSB", "NJB FRG WSB", "NJB FRG OSB", "NJB WKN", "NJB OKN",
+                   "NJB ATZ WSB", "NJB ATZ WSB", "NJB ATZ OSB", "NJB ATZ WKN", "NJB ATZ OKN",
+                   "NJB WSS", "NJB OSS",
+                 "AZ0", "AZ1", "ALH",
+                 "NVE", "NVF", "BUS", "ESZ", "PBB"
+]
