@@ -1,650 +1,389 @@
+#######################################################################################################################
+# Imports
+#######################################################################################################################
 import pandas as pd
+from pandas.api.types import CategoricalDtype
+import polars as pl
 import time
-from joblib import Parallel, delayed
+from pathlib import Path
 
+from frg import add_frg_pl_pure # function to create frg variables
+# load state-conditions and order of states
+from state_rules import state_order_new as state_order, conditions_new as conditions
 
+#######################################################################################################################
+# Global settings
 #######################################################################################################################
 
 
-# global definitions and functions
-
-#pd.set_option("display.max_columns", None)
-#pd.set_option("display.max_rows", None)
-
-def day_nr(year: int, month: int) -> int:
-    '''
-    returns nr of days in month "month" of year "year"
-    '''
-
-    if month == 2:
-        # Schaltjahr / leap year
-        is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
-        return 29 if is_leap else 28
-    month_days = {
-        1: 31, 3: 31, 4: 30, 5: 31, 6: 30,
-        7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31
-    }
-    return month_days.get(month, 0)
-
-
 #######################################################################################################################
-
-
 # Loading and preprocessing:
-
-# load factors for ZREG calculations (see status 1)
-anlage10_df = pd.read_stata("D:/projects/soep_rv/VSKT/help/Anlage_10.dta")
-anlage10_df = anlage10_df.rename(columns={"Jahr": "JAHR", "Monat": "MONAT"})
-
-# ordered list of zustände, required for status 2 and 3 
-zustand_order = ["BRF", "BMP", "VRS", "ALG", "AUF", "ARM", "PFL", "FWB",
-                 "SCH", "SON", "PMU", "USV",
-                 "RTB", "HRT", "FRG", "FZR", "NJB", "AZ0", "AZ1", "ALH"]
-
-# load data
-def load_and_preprocess(berichtsjahr):
-    load_start = time.time()
-
-    data_path = "" todo: adjust
-    file_name = f"OSV.VVL.{berichtsjahr}.VAR.dta"
-    print(f"Loading data for {berichtsjahr} from {data_path} ...")
-
-    df = pd.read_stata(data_path + file_name, convert_categoricals=False)
-
-    load_end = time.time()
-    print(f"Dataset loaded in {round(load_end - load_start, 3)} seconds.")
-    print(f" Number of episodes: {len(df)}.")
-
-    # transform time variables into datetime objects
-    df["VNZR"] = pd.to_datetime(df["VNZR"], format="%Y%m%d")
-    df["BSZR"] = pd.to_datetime(df["BSZR"], format="%Y%m%d")
-
-    # group by FDZ_ID
-    grouped_df = df.groupby("FDZ_ID")
-    id_groups = [(id,group) for id, group in grouped_df]
-
-    return id_groups
-
-
-'''
-Idea: We loop over all ID's. For a fixed ID we take each Status/Zustand and transform the corresponding episodes 
-into a new df with columns JAHR, MONAT, TAGE, EGPT, ZREG etc. (following each status' specific rules / requirements).
-The resulting 5 df's (one per status) are then merged together (ordered by pairs of JAHR, MONAT). 
-The result is one big df per ID and these are then concatenated into the final result. 
-'''
-
-
-# wrap all operations in a function, so that we can parallelise at the end:
-def pivot_episodes(id, data, berichtsjahr):
-    '''
-    :param id: FDZ_ID
-    :param data: element of df.groupby("FDZ_ID")
-    :return: df in (JAHR,MONAT) format, built from all episodes of FDZ_ID
-    '''
-
-    # define timerange
-    min_date = data["VNZR"].min()
-    max_date = pd.to_datetime(f"{berichtsjahr}1231", format="%Y%m%d")  # End of Berichtsjahr
-
-    # generate new df in required format - .replace ensures that first month is accounted for
-    data_transformed = pd.DataFrame(
-        {"ID": id,
-         "JAHR": pd.date_range(min_date.replace(day=1), max_date, freq="MS").year,
-         "MONAT": pd.date_range(min_date.replace(day=1), max_date, freq="MS").month
-         }
-    )
-    data_transformed["TAGE"] = data_transformed.apply(lambda row: day_nr(row["JAHR"], row["MONAT"]), axis=1)
-
-    # now fill data_transformed with all the data for status 1 to 5, then append to id_df_list
-
-    ###################################################################################################################
-
-    # STATUS 1:
-
-    # dictionary for Zustände - if applicable, add " & (data['Ses_frg'].isna()) " to every condition
-
-    conditions = {
-        "WSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
-                                           'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([0, 1])),
-        "OSB": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
-                                           'VSGR'].isin([1, 2, 3, 4])) & (data['RTVS'].isin([5, 6])),
-        "WKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
-                                           'VSGR'].isin([5, 6])) & (data['RTVS'].isin([0, 1])),
-        "OKN": (data['BYAT'] == 10) & (data['BYATSO'].isin(["0", "3", "4", "5", "8", "9"])) & (data[
-                                           'VSGR'].isin([5, 6])) & (data['RTVS'].isin([5, 6])),
-        "ATZ WSB": (data['BYAT'] == 9) & (data['VSGR'].isin([1, 2, 3, 4])) & (
-        data['RTVS'].isin(
-            [0, 1])),
-        "ATZ OSB": (data['BYAT'] == 9) & (data['VSGR'].isin([1, 2, 3, 4])) & (
-        data['RTVS'].isin(
-            [5, 6])),
-        "ATZ WKN": (data['BYAT'] == 9) & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([0, 1]),
-        "ATZ OKN": (data['BYAT'] == 9) & data['VSGR'].isin([5, 6]) & data['RTVS'].isin([5, 6]),
-        "WSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([0, 1]),
-        "OSS": (data['BYAT'] == 17) & data['VSGR'].isin([1, 2, 3, 4]) & data['RTVS'].isin([5, 6])}
-
-    # list to save all the df's, one per zustand
-    zustand_df_liste = []
-
-    # for each zustand read the episodes, calculate the required variables and format to merge with data_transformed:
-
-    for zustand, bedingung in conditions.items():
-
-        # isolate zustand
-        zustand_df = data[bedingung]
-
-        if len(zustand_df) != 0:
-
-            # list to save temporary results
-            episode_df_list = []
-
-            # loop over episodes for the current zustand
-            for i in range(len(zustand_df)):
-                row = zustand_df.iloc[i]
-                start_date = row.VNZR
-                end_date = row.BSZR
-                nr_of_days = len(pd.date_range(start_date, end_date, freq="D"))
-
-                # 3 lists: 1 and 2 give (JAHR, MONAT) in the timespan, 3 gives STATUS_1_TAGE for each combo JAHR,MONAT:
-
-                month_list = pd.date_range(start_date.replace(day=1), end_date, freq="MS").month.tolist()
-                year_list = pd.date_range(start_date.replace(day=1), end_date, freq="MS").year.tolist()
-
-                if len(month_list) == 1:
-                    status_tage = [(end_date.date() - start_date.date()).days + 1]
-                else:
-                    next_month = (start_date + pd.offsets.MonthEnd(0)).date()
-                    status_tage = [(next_month - start_date.date()).days + 1]  # first entry = days in first month
-                    if len(month_list) > 2:  # days in the intermediate months
-                        for j in range(1, len(month_list) - 1):
-                            status_tage.append(day_nr(year_list[j], month_list[j]))
-                    status_tage.append(end_date.day)  # days in last month
-
-                # save as new df
-                episode_df = pd.DataFrame({
-                    "JAHR": year_list,
-                    "MONAT": month_list,
-                    "STATUS_1": zustand,
-                    "STATUS_1_TAGE": status_tage
-                })
-
-                # calculate ZREG und EGPT per day (zustände are ordered by zreg_daily)
-                zreg_daily = row.ZREG / nr_of_days
-                egpt_daily = row.EGPT / nr_of_days
-
-                # calculate monthly values
-                episode_df["STATUS_1_ZREG"] = episode_df["STATUS_1_TAGE"] * zreg_daily
-                episode_df["STATUS_1_EGPT"] = episode_df["STATUS_1_TAGE"] * egpt_daily
-                episode_df["ZREG_tag"] = zreg_daily
-
-                # save in list
-                episode_df_list.append(episode_df)
-
-            # concat all results
-            output_df = pd.concat(episode_df_list, ignore_index=True)
-
-            # adjust ZREG values by anlage10_df
-            if zustand in {"OSB", "OKN", "OSS", "ATZ OSB", "ATZ OKN"}:
-                output_df = pd.merge(output_df, anlage10_df, on=["JAHR", "MONAT"], how="left")
-                output_df[["STATUS_1_ZREG", "ZREG_tag"]] = output_df[["STATUS_1_ZREG", "ZREG_tag"]].divide(
-                    output_df["ANLAGE_10"], axis=0)
-                output_df = output_df.drop(columns=["ANLAGE_10"])
-
-        else:
-            output_df = pd.DataFrame(columns=[
-                "JAHR", "MONAT", "STATUS_1", "STATUS_1_TAGE", "STATUS_1_ZREG", "STATUS_1_EGPT", "ZREG_tag"])
-            output_df = output_df.astype({
-                "JAHR": "int",
-                "MONAT": "int",
-                "STATUS_1": "object",
-                "STATUS_1_TAGE": "float",
-                "STATUS_1_ZREG": "float",
-                "STATUS_1_EGPT": "float",
-                "ZREG_tag": "float"})
-        # save result for one zustand
-        zustand_df_liste.append(output_df)
-
-    # concat all output_df's = one df with data for all Zustände
-    alle_zustaende_df = pd.concat(zustand_df_liste, ignore_index=True)
-
-    '''
-    !: can have duplicates of combos JAHR, MONAT. in this case we keep only the contribution with max ZREG_tag,
-    other zustände enter the calculation for NJB (in status 2 or 3) ...
-    '''
-
-    # find duplicates, keep track using "index", take the one with max ZREG_tag, save rest
-    alle_zustaende_df = alle_zustaende_df.reset_index(drop=False)
-    max_zustaende_df = alle_zustaende_df.sort_values("ZREG_tag", ascending=False).drop_duplicates(
-        subset=["JAHR", "MONAT"])
-    max_ids = set(max_zustaende_df["index"])
-    rest_df = alle_zustaende_df[~alle_zustaende_df["index"].isin(max_ids)].drop(columns=["index"])
-    max_zustaende_df = max_zustaende_df.drop(columns=["index", "ZREG_tag"])
-
-    # save rest for below (status 2 and 3), rename zustand/status
-    nebenjob_df = rest_df.groupby(["JAHR", "MONAT"], as_index=False)[["STATUS_1_TAGE", "STATUS_1_EGPT"]].sum()
-    nebenjob_df["STATUS"] = "NJB"
-    nebenjob_df = nebenjob_df.rename(columns={"STATUS_1_TAGE": "STATUS_TAGE", "STATUS_1_EGPT": "STATUS_EGPT"})
-
-    # max_zustaende_df will enter in status 1, hence we merge with data_transformed
-    data_transformed = pd.merge(data_transformed, max_zustaende_df, on=["JAHR", "MONAT"], how="left")
-
-    ###################################################################################################################
-
-    # STATUS 2 UND 3:
-
-    # encode zustände
-    conditions = {"BRF": (data['BYAT'] == 10) & (data['BYATSO'].isin(["1", "2", "6", "7"])),
-                  "BMP": (data['BYAT'] == 90),
-                  "VRS": (data['BYAT'] == 18),
-                  "ALG": (data['BYAT'] == 13),
-                  "AUF": (data['BYAT'] == 12) | ((data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'].isin(["1", 'A']))),
-                  "ARM": (data['BYAT'] == 14),
-                  "PFL": (data['BYAT'] == 7) | ((data['BYAT'] == 60) & (data['BYATSO'] == '2')) |
-                         ((data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '8')),
-                  "FWB": (data['BYAT'].isin([20, 21])) & (data['BYATSO'].isin(["0", "2", "5", "6", "7"])),
-                  "SCH": ((data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '3')) | (
-                          (data['BYAT'].isin([40, 41, 42, 43, 48])) & (data['BYATSO'].isin(["4", "6", "7", "8", 'C']))),
-                  "SON": (data['BYAT'].isin([8,15,16, 30, 31,26, 49])) | (
-			  (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'].isin(["9", "2"]))) | (
-                         (data['BYAT'] == 60) & (data['BYATSO'].isin(["6", "7"]))) | (
-                                 (data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '1')),
-                  "PMU": (data['BYAT'] == 11),
-                  "USV": (data['BYAT'].isin([2, 3])),
-                  "RTB": (data['BYAT'].isin([70, 71, 72])),
-                  "HRT": (data['BYAT'].isin([20, 21])) & (data['BYATSO'] == '4'),
-                  #"FRG": ((data['KZSO'].notna()) & (data['KZSO'] != 0), # todo: may need some finetuning!
-                  "FZR": (data['BYAT'] == 25),
-                  "AZ0": (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'] == '5') & (data['RTVS'] == 0),
-                  "AZ1": (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'] == '5') & (data['RTVS'] == 1),
-                  "ALH": (data['BYAT'] == 4) | (
-                          (data['BYAT'].isin([40, 41, 48])) & (data['BYATSO'].isin(["3", 'B', 'D'])))
-		 }
-
-    # list to save the df's generated from each zustand
-    zustand_df_liste = []
-
-    for zustand, bedingung in conditions.items():
-
-        # isolate zustand
-        zustand_df = data[bedingung]
-
-        if len(zustand_df) != 0:
-
-            # list to save the result for each zustand
-            episode_df_list = []
-
-            # loop over episodes, calculate JAHR,MONAT,STATUS_x_TAGE etc...:
-
-            for i in range(len(zustand_df)):
-                row = zustand_df.iloc[i]
-                start_date = row.VNZR
-                end_date = row.BSZR
-                nr_of_days = len(pd.date_range(start_date, end_date, freq="D"))
-
-                # 3 lists: 1 and 2 for JAHR, MONAT, 3 for STATUS_x_TAGE
-                month_list = pd.date_range(start_date.replace(day=1), end_date, freq="MS").month.tolist()
-                year_list = pd.date_range(start_date.replace(day=1), end_date, freq="MS").year.tolist()
-
-                if len(month_list) == 1:
-                    status_tage = [(end_date.date() - start_date.date()).days + 1]
-                else:
-                    next_month = (start_date + pd.offsets.MonthEnd(0)).date()
-                    status_tage = [(next_month - start_date.date()).days + 1]  # first entry = days in first month
-                    if len(month_list) > 2:  # days in the intermediate months
-                        for j in range(1, len(month_list) - 1):
-                            status_tage.append(day_nr(year_list[j], month_list[j]))
-                    status_tage.append(end_date.day)  # days in last month
-
-                # save as new df
-                episode_df = pd.DataFrame({
-                    "JAHR": year_list,
-                    "MONAT": month_list,
-                    "STATUS": zustand,
-                    "STATUS_TAGE": status_tage
-                })
-
-                # calculate EGPT per day
-                egpt_daily = row.EGPT / nr_of_days
-                episode_df["STATUS_EGPT"] = episode_df["STATUS_TAGE"] * egpt_daily
-
-                # save in list
-                episode_df_list.append(episode_df)
-
-            # concat all episode_df's
-            output_df = pd.concat(episode_df_list, ignore_index=True)
-
-        else:
-            output_df = pd.DataFrame(columns=["JAHR", "MONAT", "STATUS", "STATUS_TAGE", "STATUS_EGPT"])
-            output_df = output_df.astype({
-                "JAHR": "int",
-                "MONAT": "int",
-                "STATUS": "object",
-                "STATUS_TAGE": "float",
-                "STATUS_EGPT": "float"})
-
-        zustand_df_liste.append(output_df)
-
-    # add nebenjob_df (from status 1... )
-    zustand_df_liste.append(nebenjob_df)
-
-    # concat all output_df's (and nebenjob_df) = one df with data for every zustand
-    alle_zustaende_df = pd.concat(zustand_df_liste, ignore_index=True)
-
-    # sort according to zustand_order, keep top 2 entries
-    alle_zustaende_df["STATUS"] = pd.Categorical(alle_zustaende_df["STATUS"], categories=zustand_order, ordered=True)
-    alle_zustaende_geordnet_df = alle_zustaende_df.sort_values(by=["JAHR", "MONAT", "STATUS"])
-    top2_zustaende_df = alle_zustaende_geordnet_df.groupby(["JAHR", "MONAT"]).head(2).reset_index(drop=True)
-
-    # pivot to format for status 2 und 3:
-
-    # RANG counts nr of multiple entries per JAHR,MONAT
-    top2_zustaende_df["RANG"] = top2_zustaende_df.groupby(["JAHR", "MONAT"]).cumcount() + 1
-
-    # pivot (if not empty)
-    if top2_zustaende_df.empty:
-        zustaende_pivot_df = pd.DataFrame(columns=[
-            "JAHR", "MONAT", "STATUS_2", "STATUS_2_TAGE",
-            "STATUS_2_EGPT", "STATUS_3", "STATUS_3_TAGE",
-            "STATUS_3_EGPT"
-        ])
-        zustaende_pivot_df = zustaende_pivot_df.astype({
-            "JAHR": "int",
-            "MONAT": "int",
-            "STATUS_2": "object",
-            "STATUS_2_TAGE": "float",
-            "STATUS_2_EGPT": "float",
-            "STATUS_3": "object",
-            "STATUS_3_TAGE": "float",
-            "STATUS_3_EGPT": "float"})
-    else:
-        zustaende_pivot_df = top2_zustaende_df.pivot(index=["JAHR", "MONAT"], columns="RANG")[
-            ["STATUS", "STATUS_TAGE", "STATUS_EGPT"]]
-
-        # generate, order and rename correct variable names:
-
-        zustaende_pivot_df.columns = [f"{spalte}_{rang + 1}" for spalte, rang in zustaende_pivot_df]
-        zustaende_pivot_df = zustaende_pivot_df.reset_index()
-        status_variablen = ["STATUS_2", "STATUS_TAGE_2", "STATUS_EGPT_2", "STATUS_3", "STATUS_TAGE_3", "STATUS_EGPT_3"]
-        for variable in status_variablen:
-            if variable not in zustaende_pivot_df.columns:
-                zustaende_pivot_df[variable] = pd.NA
-        zustaende_pivot_df = zustaende_pivot_df.rename(columns={
-            "STATUS_TAGE_2": "STATUS_2_TAGE",
-            "STATUS_EGPT_2": "STATUS_2_EGPT",
-            "STATUS_TAGE_3": "STATUS_3_TAGE",
-            "STATUS_EGPT_3": "STATUS_3_EGPT"
-        })
-
-    # merge with data_transformed
-    data_transformed = pd.merge(data_transformed, zustaende_pivot_df, on=["JAHR", "MONAT"], how="left")
-
-    ###################################################################################################################
-
-    # STATUS 4 and 5:
-
-    status_df_list = []  # list to save all status_df's
-
-    # filter for status 4 (BYAT = 5):
-    status_data = data[data["BYAT"] == 5]
-
-    if len(status_data) != 0:
-        # sort by VNZR
-        episodes_df = status_data.sort_values(by="VNZR", ignore_index=True)
-
-        # untangle overlapping episodes:
-
-        # loop over rows in status_data, update row nr i and length of loop N dynamically
-        i = 1
-        N = len(episodes_df)
-        while i < N:
-
-            # get rid of overlaps:
-
-            if episodes_df.loc[i, 'VNZR'] <= episodes_df.loc[i - 1, 'BSZR']:
-                # split, update df, start over
-                if episodes_df.loc[i - 1, 'BSZR'] <= episodes_df.loc[i, 'BSZR']:
-                    new_df = pd.DataFrame(
-                        {"VNZR": [episodes_df.loc[i, 'VNZR']],
-                         "BSZR": [episodes_df.loc[i - 1, 'BSZR']]
-                         })
-                    if episodes_df.loc[i - 1, 'VNZR'] < episodes_df.loc[i, 'VNZR']:
-                        new_df.loc[len(new_df)] = [episodes_df.loc[i - 1, 'VNZR'],
-                                                   episodes_df.loc[i, 'VNZR'] - pd.Timedelta("1 day")]
-                    if episodes_df.loc[i, 'BSZR'] > episodes_df.loc[i - 1, 'BSZR']:
-                        new_df.loc[len(new_df)] = [episodes_df.loc[i - 1, 'BSZR'] + pd.Timedelta("1 day"),
-                                                   episodes_df.loc[i, 'BSZR']]
-                    unaltered_rows_df = episodes_df[~episodes_df.index.isin([i - 1, i])]
-                # don't raise i to scan same row again
-                elif episodes_df.loc[i - 1, 'BSZR'] > episodes_df.loc[i, 'BSZR']:
-                    new_df = pd.DataFrame(
-                        {"VNZR": [episodes_df.loc[i, 'VNZR'], episodes_df.loc[i, 'BSZR'] + pd.Timedelta("1 day")],
-                         "BSZR": [episodes_df.loc[i, 'BSZR'], episodes_df.loc[i - 1, 'BSZR']]
-                         })
-                    if episodes_df.loc[i - 1, 'VNZR'] < episodes_df.loc[i, 'VNZR']:
-                        new_df.loc[len(new_df)] = [episodes_df.loc[i - 1, 'VNZR'],
-                                                   episodes_df.loc[i, 'VNZR'] - pd.Timedelta("1 day")]
-                    unaltered_rows_df = episodes_df[~episodes_df.index.isin([i - 1, i])]
-                    # raise i to scan next row
-                    i = i + 1
-
-                # update episodes_df
-                episodes_df = pd.concat([new_df, unaltered_rows_df], ignore_index=True).sort_values(
-                    by="VNZR").reset_index(drop=True)
-
-                # update N
-                N = len(episodes_df)
-            else:
-                i = i + 1
-
-        # create new df with JAHR,MONAT and count nr of days in each pair:
-
-        intermediate_results = []
-
-        for _, row in episodes_df.iterrows():
-            # create date range
-            dates = pd.date_range(start=row["VNZR"], end=row["BSZR"], freq="D")
-
-            # build df
-            temp_df = pd.DataFrame({
-                "JAHR": dates.year,
-                "MONAT": dates.month
-            })
-
-            # count days
-            day_count = temp_df.groupby(["JAHR", "MONAT"]).size().reset_index(name="STATUS_4_TAGE")
-
-            # save in list
-            intermediate_results.append(day_count)
-
-        # put all results together
-        output_df = pd.concat(intermediate_results, ignore_index=True)
-        output_df = output_df.groupby(["JAHR", "MONAT"], as_index=False)["STATUS_4_TAGE"].sum()
-
-
-    else:
-        output_df = pd.DataFrame(columns=["JAHR", "MONAT", "STATUS_4_TAGE"])
-        output_df = output_df.astype({
-            "JAHR": "int",
-            "MONAT": "int",
-            "STATUS_4_TAGE": "float"})
-
-    # save in status_df_list
-    status_df_list.append(output_df)
-
-    ###################################################################################################################
-
-    # filter for Status 5 (BYAT = 6) - same logic as Status 4, but keep also track of EGPT
-    status_data = data[data["BYAT"] == 6]
-
-    if len(status_data) != 0:
-        # sort by VNZR
-        episodes_df = status_data.sort_values(by="VNZR", ignore_index=True)
-
-        # calculate daily EGPT's per episode
-        episodes_df["days"] = (episodes_df["BSZR"] - episodes_df["VNZR"]).dt.days + 1
-        episodes_df["EGPT_daily"] = episodes_df["EGPT"] / episodes_df["days"]
-
-        # untangle episodes: loop over rows in status_data, update row nr i and length of loop N dynamically
-        i = 1
-        N = len(episodes_df)
-        while i < N:
-
-            # get rid of overlaps:
-
-            if episodes_df.loc[i, 'VNZR'] <= episodes_df.loc[i - 1, 'BSZR']:
-                # split, sum daily EGPT's, update, start over
-                if episodes_df.loc[i - 1, 'BSZR'] <= episodes_df.loc[i, 'BSZR']:
-                    new_df = pd.DataFrame(
-                        {"VNZR": [episodes_df.loc[i, 'VNZR']],
-                         "BSZR": [episodes_df.loc[i - 1, 'BSZR']],
-                         "EGPT_daily": [episodes_df.loc[i - 1, 'EGPT_daily'] + episodes_df.loc[i, 'EGPT_daily']]
-                         })
-                    if episodes_df.loc[i - 1, 'VNZR'] < episodes_df.loc[i, 'VNZR']:
-                        new_df.loc[len(new_df)] = [episodes_df.loc[i - 1, 'VNZR'],
-                                                   episodes_df.loc[i, 'VNZR'] - pd.Timedelta("1 day"),
-                                                   episodes_df.loc[i - 1, 'EGPT_daily']]
-
-                    if episodes_df.loc[i, 'BSZR'] > episodes_df.loc[i - 1, 'BSZR']:
-                        new_df.loc[len(new_df)] = [episodes_df.loc[i - 1, 'BSZR'] + pd.Timedelta("1 day"),
-                                                   episodes_df.loc[i, 'BSZR'],
-                                                   episodes_df.loc[i, 'EGPT_daily']]
-                    unaltered_rows_df = episodes_df[~episodes_df.index.isin([i - 1, i])]
-                # do not raise i
-                elif episodes_df.loc[i - 1, 'BSZR'] > episodes_df.loc[i, 'BSZR']:
-                    new_df = pd.DataFrame(
-                        {"VNZR": [episodes_df.loc[i, 'VNZR'], episodes_df.loc[i, 'BSZR'] + pd.Timedelta("1 day")],
-                         "BSZR": [episodes_df.loc[i, 'BSZR'], episodes_df.loc[i - 1, 'BSZR']],
-                         "EGPT_daily": [episodes_df.loc[i - 1, 'EGPT_daily'] + episodes_df.loc[i, 'EGPT_daily'],
-                                        episodes_df.loc[i - 1, "EGPT_daily"]]
-                         })
-                    if episodes_df.loc[i - 1, 'VNZR'] < episodes_df.loc[i, 'VNZR']:
-                        new_df.loc[len(new_df)] = [episodes_df.loc[i - 1, 'VNZR'],
-                                                   episodes_df.loc[i, 'VNZR'] - pd.Timedelta("1 day"),
-                                                   episodes_df.loc[i - 1, 'EGPT_daily']]
-                    unaltered_rows_df = episodes_df[~episodes_df.index.isin([i - 1, i])]
-                    i = i + 1  # raise i
-                episodes_df = pd.concat([new_df, unaltered_rows_df], ignore_index=True).sort_values(
-                    by="VNZR").reset_index(drop=True)
-                # update N
-                N = len(episodes_df)
-            else:
-                i = i + 1
-
-        # create new df with JAHR,MONAT and count nr of days and EGPT's in each pair:
-
-        intermediate_results = []
-
-        for _, row in episodes_df.iterrows():
-            # create date range
-            dates = pd.date_range(start=row["VNZR"], end=row["BSZR"], freq="D")
-
-            # fill a df with all days
-            temp_df = pd.DataFrame({
-                "JAHR": dates.year,
-                "MONAT": dates.month
-            })
-
-            # count days, calculate EGPT per month
-            day_count = temp_df.groupby(["JAHR", "MONAT"]).size().reset_index(name="STATUS_5_TAGE")
-            day_count["STATUS_5_EGPT"] = day_count["STATUS_5_TAGE"] * row["EGPT_daily"]
-
-            # save in list
-            intermediate_results.append(day_count)
-
-        # put all results together
-        output_df = pd.concat(intermediate_results, ignore_index=True)
-        output_df = output_df.groupby(["JAHR", "MONAT"], as_index=False)[["STATUS_5_TAGE", "STATUS_5_EGPT"]].sum()
-
-    else:
-        output_df = pd.DataFrame(columns=["JAHR", "MONAT", "STATUS_5_TAGE"])
-        output_df = output_df.astype({
-            "JAHR": "int",
-            "MONAT": "int",
-            "STATUS_5_TAGE": "float"})
-
-    # save in status_df_list
-    status_df_list.append(output_df)
-
-    # merge all elements of status_df_list with data_transformed
-    for element in status_df_list:
-        data_transformed = data_transformed.merge(element, on=["JAHR", "MONAT"], how="left")
-
-    process_end = time.time()
-    #print(f" Runtime: {round(process_end - process_start, 3)} seconds.")
-
-    return data_transformed
-
-
 #######################################################################################################################
 
+# load factors for ZREG calculations
+anlage10_df = pd.read_stata(r"D:\projects\soep_rv\VSKT\help\Anlage_10.dta")
+anlage10_df = pl.from_pandas(anlage10_df)
+anlage10_df = anlage10_df.select(
+    pl.col("Jahr").cast(pl.Int64).alias("JAHR"),
+    pl.col("Monat").cast(pl.Int64).alias("MONAT"),
+    pl.col("ANLAGE_10")
+)
 
-# run the function for each ID in parallel:
-
-def run_in_batches_and_save_result(id_groups, batch_size, destination_folder, berichtsjahr):
+def load_and_preprocess(working_folder: str, dataset: str, berichtsjahr: int) -> pl.DataFrame:
+    ''' Adds variables "Ses_frg" and "Beruf_frg", converts "VZNR" and "BSZR" to datetime
+    :param working_folder: folder to save temporary preprocessed df as parquet
+    :param dataset: VVL or VSKT
+    :param berichtsjahr: year
+    :return: preprocessed df
     '''
-    :param id_groups: output of load_and_preprocess(berichtsjahr)
-    :param batch_size: int (should be less than 100000)
-    :param destination_folder: str
-    :param berichtsjahr: int
-    :return: returns final result and saves it as VVL_{berichtsjahr}_pivot.dta to destination_folder
-    '''
-
-    batches = [id_groups[i:i+batch_size] for i in range(0, len(id_groups), batch_size)]
-    all_files = []
-
-    for i, batch in enumerate(batches):
-        batch_start = time.time()
-        print(f"Processing batch {i+1}/{len(batches)} ...")
-        results = Parallel(n_jobs=8)(
-            delayed(pivot_episodes)(id, group, berichtsjahr) for id, group in batch
-        )
-        result_df = pd.concat(results, ignore_index=True)
-        result_df = result_df.rename(columns={"ID": "FDZ_ID"})
-
-        # save each batch to disk
-        file_path = destination_folder + f"episodes_pivot_part_{i}.parquet"
-        result_df.to_parquet(file_path)
-        all_files.append(file_path)
-        batch_end = time.time()
-        print(f" Done in {round(batch_end - batch_start, 3)} seconds.")
-
-    # recombine from disk
-    final_df = pd.concat([pd.read_parquet(f) for f in all_files], ignore_index=True)
-
-    # final formatting:
-    columns_to_num = ['JAHR', 'MONAT', 'STATUS_1_TAGE',
-                      'STATUS_2_TAGE',
-                      'STATUS_3_TAGE', "STATUS_3_EGPT"]
-    columns_to_str = ["STATUS_1", "STATUS_2", "STATUS_3"]
-
-    for col in columns_to_num:
-        final_df[col] = pd.to_numeric(final_df[col], errors="coerce")
-    for col in columns_to_str:
-        final_df[col] = final_df[col].astype(str)
-
-    # replace "nan" and "None" strings by nan
-    final_df[['STATUS_1', 'STATUS_2', 'STATUS_3']] = final_df[['STATUS_1', 'STATUS_2', 'STATUS_3']].replace(
-        ["nan","None"], "")
-
-    # optional: downcast dtypes to save space
-    final_df["JAHR"] = final_df["JAHR"].astype("int16")
-    final_df["MONAT"] = final_df["MONAT"].astype("int8")
-    final_df["STATUS_4_TAGE"] = final_df["STATUS_4_TAGE"].astype("float32")
-    final_df["STATUS_5_TAGE"] = final_df["STATUS_5_TAGE"].astype("float32")
+    print("Loading data...")
+    data_path = Path(fr"D:\rohdaten_fdz\{dataset}\OSV.{dataset}.{berichtsjahr}.VAR.dta")
+    working_folder = Path(working_folder)
+    file_path = working_folder / fr"OSV.{dataset}.{berichtsjahr}.VAR.preprocessed.parquet"
     
-    # optional: fill numeric nan's by 0
-    # final_df[final_df.select_dtypes(include="number").columns] = final_df.select_dtypes(include="number").fillna(0)
+    if file_path.exists():
+        print("File already preprocessed, loading preprocessed version ...")
+        df = pd.read_parquet(file_path)
+        df = pl.from_pandas(df)
+    else:
+        df = pd.read_stata(data_path, convert_categoricals=False)
+        df = pl.from_pandas(df)
 
-    # export result
-    save_as = f"VVL_{berichtsjahr}_pivot.dta"
-    final_df.to_stata(destination_folder + save_as, write_index=False)
+        # add Ses_frg and Beruf_frg variables (for status "FRG")
+        print("Preprocessing data...")
+        df = add_frg_pl_pure(df)
 
-    print(f"\n Output saved to {destination_folder + save_as}.")
+        # transform time variables into datetime objects
+        df = df.with_columns([
+            pl.col("VNZR").cast(pl.Utf8).str.strptime(pl.Date,"%Y%m%d").alias("VNZR"),
+            pl.col("BSZR").cast(pl.Utf8).str.strptime(pl.Date,"%Y%m%d").alias("BSZR"),
+        ])
+		
+        # optional: drop "PSY" col
+        # df = df.drop("PSY")
+        
+		# save df in case further processing fails
+        df.write_parquet(file_path)
+        print("Done!")
 
-    return final_df
-
+    return df
 
 #######################################################################################################################
+# main functions:
+#######################################################################################################################
+
+def make_state_expr(conditions: dict[str, pl.Expr]) -> pl.Expr:
+    ''' Creates one big polar expression from conditions, used to filter the df by states.
+    :param conditions: dict of (state, expression)
+    :return: polars expression
+    '''
+    expr = None
+    for state, cond in conditions.items():
+        if expr is None:
+            expr = pl.when(cond).then(pl.lit(state))
+        else:
+            expr = expr.when(cond).then(pl.lit(state))
+			
+    return expr.otherwise(pl.lit("OTHER"))
+
+
+def pivot_episodes(df: pl.DataFrame) -> pl.DataFrame:
+    ''' Turns each row (=episode) into a monthly timeline running from VNZR to BSZR.
+    :param df: preprocessed pl.DataFrame in episode format with 'Ses_frg' column.
+    :return: pl.DataFrame in timeline format with cols for state/days/egpt/zreg per month
+    '''
+
+    # add state column
+    df = df.with_columns(
+        state=make_state_expr(conditions)
+    ).drop([
+        'LFNR', 'VSGR', 'BYAT', 'BYATSO', 'KI', 'GM', 'RTVS', 'FIZTVAR', 'KZSO', 'RCEG', 'BHBR',
+        'QLGR', 'RESV2', 'ZRMO', 'EGPTAN', 'INJA', 'RESV', 'SES', 'Ses_frg', 'Beruf_frg'
+    ])
+
+    # create a timeline of steps (year, month) for each episode, count days per month
+    df = df.with_columns(
+        start_month = pl.col("VNZR").dt.truncate("1mo"),
+        end_month = pl.col("BSZR").dt.truncate("1mo")
+    ).with_columns(
+        month = pl.date_ranges(
+            start=pl.col("start_month"),
+            end=pl.col("end_month"),
+            interval="1mo",
+            closed="both"
+        )
+    )
+    df_monthly = df.explode("month")
+    df_monthly = df_monthly.with_columns(
+        month_start = pl.col("month"),
+        month_end = pl.col("month").dt.offset_by("1mo") - pl.duration(days=1)
+    )
+    df_monthly = df_monthly.with_columns(
+    overlap_start = pl.max_horizontal("VNZR","month_start"),
+        overlap_end = pl.min_horizontal("BSZR","month_end")
+   ).with_columns(tage = (pl.col("overlap_end")-pl.col("overlap_start")).dt.total_days()+1)
+
+
+    # calculate ZREG und EGPT per day, then per month as columns
+    df_monthly = df_monthly.with_columns(
+            egpt = (pl.col("tage") * pl.col("EGPT") / (
+                    (pl.col("BSZR")-pl.col("VNZR")).dt.total_days()+1)).cast(pl.Float32),
+            zreg = (pl.col("tage") * pl.col("ZREG") / (
+                    (pl.col("BSZR") - pl.col("VNZR")).dt.total_days() + 1)).cast(pl.Float32)
+    )
+
+    # extract JAHR and MONAT and add as columns
+    df_monthly = df_monthly.with_columns(
+        JAHR = pl.col("month").dt.year(),
+        MONAT = pl.col("month").dt.month(),
+        TAGE = ((pl.col("month_end")-pl.col("month_start")).dt.total_days()+1).cast(pl.Int8)
+    ).drop([
+        "month", 'VNZR', 'BSZR', 'ZREG', 'EGPT', 'start_month', 'end_month', 'month_start',
+        'month_end', 'overlap_start', 'overlap_end'
+    ])
+
+    # deal with duplicates of (FDZ_ID, JAHR, MONAT)
+    df_monthly = df_monthly.group_by(["FDZ_ID", "JAHR", "MONAT", "TAGE", "state"]).agg(
+        [
+            pl.sum("tage"),
+            pl.sum("egpt"),
+            pl.sum("zreg")
+        ]
+    )
+    # reset nr of days if sum of tage is too large
+    df_monthly = df_monthly.with_columns(pl.min_horizontal("tage", "TAGE").cast(pl.Int8).alias("tage"))
+
+    # (re-)calculate daily EGPT and ZREG values (now per month, not per episode)
+    df_monthly = df_monthly.with_columns(
+            (pl.col("egpt") / pl.col("tage")).alias("egpt_daily"),
+            (pl.col("zreg") / pl.col("tage")).alias("zreg_daily")
+    )
+
+    # adjust ZREG values using values from anlage10_df
+    df_monthly = df_monthly.join(anlage10_df.cast({"JAHR": pl.Int32, "MONAT": pl.Int8}), on=["JAHR", "MONAT"])
+    df_monthly = df_monthly.with_columns(
+        pl.when(pl.col("state").is_in({"OSB", "OKN", "FRG OSB","OSS", "ATZ OSB", "ATZ OKN"}))
+                .then(pl.col("zreg") / pl.col("ANLAGE_10")).otherwise("zreg").alias("zreg"),
+                pl.when(pl.col("state").is_in({"OSB", "OKN", "FRG OSB", "OSS", "ATZ OSB", "ATZ OKN"}))
+                        .then(pl.col("zreg_daily") / pl.col("ANLAGE_10")).otherwise("zreg_daily").alias("zreg_daily")
+    ).drop("ANLAGE_10")
+
+    return df_monthly
+
+#######################################################################################################################
+
+def generate_status(df: pl.DataFrame, names_and_vars: list[str]) -> pl.DataFrame:
+    ''' Generates timeline format for a single state/status.
+    :param df: pl.DataFrame in timeline format, output of pivot_episodes().
+    :param names_and_vars: list of the form ["name", "state", "variables"] where "state" is the state considered
+    and "name" specifies how the status variables are called (ie name_TAGE etc.) and "variables" are a subset of 
+    {TAGE, EGPT, ZREG}.
+    :return: pl.DataFrame with cols FDZ_ID, JAHR, MONAT, TAGE, name_TAGE, name_EGPT etc.
+    '''
+    name = names_and_vars.pop(0)  # pop specified name from list
+    state = names_and_vars.pop(0)  # pop state to consider
+    standard_cols = ["FDZ_ID", "JAHR", "MONAT", "TAGE"]
+    additional_cols = [f"{variable.lower()}" for variable in names_and_vars]
+    cols_to_keep = standard_cols + additional_cols
+
+    df_state = df.filter(pl.col("state") == state)
+    df_state = df_state[cols_to_keep].rename(
+        {col: f"{name}_{col.upper()}" for col in additional_cols}
+    )
+
+    return df_state
+
+
+def generate_status_1_and_NJB(df: pl.DataFrame) -> tuple[pl.DataFrame]:
+    ''' Generates timeline format for STATUS_1, renames certain states as "NJB state" in df.
+    :param df: pl.DataFrame in timeline format, output of pivot_episodes().
+    :return: pl.DataFrame for STATUS_1, input df with certain states changed to "NJB state" (needed for STATUS 2 and 3). 
+    '''
+
+    # filter for first 12 states (relevant for STATUS_1)
+    df_filtered = df.filter(pl.col("state").is_in(list(conditions.keys())[:12]))
+
+    keys = ["FDZ_ID", "JAHR", "MONAT", "TAGE"]
+    top3 = (
+        df_filtered.group_by(keys).agg([
+            pl.col("state").sort_by("zreg_daily", descending=True).head(6).alias("top3_states"),
+            pl.col("tage").sort_by("zreg_daily", descending=True).head(6).alias("top3_tage"),
+            pl.col("egpt").sort_by("zreg_daily", descending=True).head(6).alias("top3_egpt"),
+            pl.col("zreg").sort_by("zreg_daily", descending=True).head(6).alias("top3_zreg"),
+            pl.col("egpt_daily").sort_by("zreg_daily", descending=True).head(6).alias("top3_egpt_daily"),
+            pl.col("zreg_daily").sort_by("zreg_daily", descending=True).head(6).alias("top3_zreg_daily")
+        ])
+    )
+
+    check = top3.select("top3_states").with_columns( length = pl.col("top3_states").list.len())
+    print(check["length"].value_counts())
+
+    # create df for STATUS_1
+    df_status1 = top3.with_columns([
+        pl.col("top3_states").list.get(0).alias("STATUS_1"),
+        pl.col("top3_tage").list.get(0).alias("STATUS_1_TAGE"),
+        pl.col("top3_egpt").list.get(0).alias("STATUS_1_EGPT"),
+        pl.col("top3_zreg").list.get(0).alias("STATUS_1_ZREG")
+    ]).drop(['top3_states', 'top3_tage', 'top3_egpt', 'top3_zreg', "top3_egpt_daily", "top3_zreg_daily"])
+
+    # create rows where state = "NJB {state}" and update their og version in df
+    nj_data = []
+    for i in range(1, 3):
+        df_nj = top3.with_columns(
+            (pl.lit("NJB ") + pl.col("top3_states").list.get(i)).alias("state"),
+            pl.col("top3_tage").list.get(i).alias("tage"),
+            pl.col("top3_egpt").list.get(i).alias("egpt"),
+            pl.col("top3_zreg").list.get(i).alias("zreg"),
+            pl.col("top3_egpt_daily").list.get(i).alias("egpt_daily"),
+            pl.col("top3_zreg_daily").list.get(i).alias("zreg_daily")
+        ).drop(['top3_states', 'top3_tage', 'top3_egpt', 'top3_zreg', "top3_egpt_daily", "top3_zreg_daily"
+        ]).filter(pl.col("zreg_daily").is_not_null())
+        nj_data.append(df_nj)
+    df_update = pl.concat(nj_data,how= "vertical")
+    df = df.join(df_update,
+                 on= ['FDZ_ID', 'JAHR', 'MONAT', 'TAGE', 'tage', 'egpt', 'zreg', 'egpt_daily', 'zreg_daily'],
+                 how= "left",
+                 suffix="_new"
+    ).with_columns(state = pl.coalesce(["state_new","state"])).drop("state_new")
+
+    return df_status1, df
+
+
+def generate_multiple_ordered_status(df: pl.DataFrame, amount_of_status: int, state_order: list) -> pl.DataFrame:
+    '''  Generates timeline format for STATUS_2,3 etc., their number specified by amount_of_status.
+    :param df: pl.DataFrame in timeline format with NJB states, output of generate_status_1_and_NJB().
+    :param amount_of_status: nr of status to generate.
+    :param state_order: list that defines how states are prioritised in case their egpt_daily values are equal.
+    :return: pl.DataFrame for STATUS_2, STATUS_3 etc.
+    '''
+
+    # turn state_order into a mapping
+    order_map = {state: i for i, state in enumerate(state_order)}
+
+    # filter df for relevant states, create a rank of states using state_order
+    df_filtered = df.filter(pl.col("state").is_in(state_order)).with_columns(
+        pl.col("state").replace(order_map).cast(pl.Int8).alias("rank")
+    )
+
+    # rank by egpt_daily, then by state_order
+    keys = ["FDZ_ID", "JAHR", "MONAT", "TAGE"]
+    top_egpt_daily = df_filtered.group_by(keys).agg([
+            pl.col("state").sort_by(
+                "egpt_daily", "rank", descending=[True,False]).head(amount_of_status).alias("top_states"),
+            pl.col("tage").sort_by(
+                "egpt_daily", "rank", descending=[True,False]).head(amount_of_status).alias("top_tage"),
+            pl.col("egpt").sort_by(
+                "egpt_daily", "rank", descending=[True,False]).head(amount_of_status).alias("top_egpt"),
+            pl.col("zreg").sort_by(
+                "egpt_daily", "rank", descending=[True,False]).head(amount_of_status).alias("top_zreg"),
+            pl.col("egpt_daily").sort_by(
+                "egpt_daily", "rank", descending=[True,False]).head(amount_of_status).alias("top_egpt_daily"),
+            pl.col("zreg_daily").sort_by(
+                "egpt_daily", "rank", descending=[True,False]).head(amount_of_status).alias("top_zreg_daily")
+        ])
+
+    # create df with STATUS_2, STATUS_3 etc
+    status_df_list = []
+    for i in range(2, amount_of_status + 2):
+        status_df = top_egpt_daily.with_columns([
+            pl.col("top_states").list.get(i - 2).alias(f"STATUS_{i}"),
+            pl.col("top_tage").list.get(i - 2).alias(f"STATUS_{i}_TAGE"),
+            pl.col("top_egpt").list.get(i - 2).alias(f"STATUS_{i}_EGPT"),
+            pl.col("top_zreg").list.get(i - 2).alias(f"STATUS_{i}_ZREG")
+        ]).drop(['top_states', 'top_tage', 'top_egpt', 'top_zreg', "top_egpt_daily", "top_zreg_daily"])
+        status_df_list.append(status_df)
+
+    df_status_ordered = status_df_list[0]
+    for df_status in status_df_list[1:]:
+        df_status_ordered = df_status_ordered.join(df_status, on= keys)
+
+    return df_status_ordered
+
+#######################################################################################################################
+
+def merge_into_full_timeline(berichtsjahr: int, df_list: list[pl.DataFrame]) -> pl.DataFrame:
+    ''' Merge everything into one big df.
+    :param berichtsjahr: maximum year of each timeline.
+    :param df_list: list of pl.DataFrames, containing all timelines with STATUS variables. Ie outputs of 
+    generate_status(), generate_status_1_and_NJB() and generate_multiple_ordered_status().
+    :return: pl.DataFrame with all timelines and all STATUS variables
+    '''
+
+    # find min dates per FDZ_ID in each df_status
+    min_dates_per_df = []
+    for df_status in df_list:
+        df_min = (
+            df_status.select(
+                "FDZ_ID",
+                pl.date("JAHR", "MONAT", 1).alias("date"),
+            )
+            .group_by("FDZ_ID")
+            .agg(
+                min_date=pl.col("date").min(),
+            )
+        )
+        min_dates_per_df.append(df_min)
+    all_mins = pl.concat(min_dates_per_df, how="vertical")
+
+    # find "global" min date for each FDZ_ID
+    date_bounds = (
+        all_mins
+        .group_by("FDZ_ID")
+        .agg(
+            min_date=pl.col("min_date").min()
+        )
+    ).with_columns(max_date=pl.date(berichtsjahr, 12, 31))
+
+    # create timeline per FDZ_ID
+    date_bounds = date_bounds.with_columns(
+        months=pl.date_ranges(
+            start=pl.col("min_date").dt.truncate("1mo"),
+            end=pl.col("max_date").dt.truncate("1mo"),
+            interval="1mo",
+            closed="both",
+        )
+    )
+    timeline_per_id = date_bounds.explode("months").with_columns(
+            JAHR=pl.col("months").dt.year(),
+            MONAT=pl.col("months").dt.month(),
+            TAGE=(pl.col("months").dt.offset_by("1mo") - pl.col("months")).dt.total_days().cast(pl.Int8)
+        ).select(["FDZ_ID", "JAHR", "MONAT", "TAGE"])
+
+    # join timeline with all of df_status'
+    df_final = timeline_per_id
+    for df_status in df_list:
+        df_final = df_final.join(df_status, on=["FDZ_ID", "JAHR", "MONAT", "TAGE"], how="left")
+    df_final.sort(["FDZ_ID", "JAHR", "MONAT"])
+
+    return df_final
+
+#######################################################################################################################
+# run (example)
+#######################################################################################################################
+
+working_folder = ...
+
+start = time.time()
+
+print("Preprocessing...")
+df = load_and_preprocess(working_folder, "VVL", 2023)
+
+print("Pivoting episodes into timeline....")
+df = pivot_episodes(df)
+
+print("Extracting Status 1 to 5...")
+df_list = []
+df_status1,df = generate_status_1_and_NJB(df)
+df_list.append(df_status1)
+df_list.append(generate_multiple_ordered_status(df, 2, state_order))
+df_list.append(generate_status(df, ["STATUS_4", "GF0", "TAGE"]))
+df_list.append(generate_status(df, ["STATUS_5", "GF1", "TAGE", "EGPT"]))
+
+print("Merging everything into timeline...")
+res = merge_into_full_timeline(2023, df_list)
+
+end = time.time()
+print(f"Run took {int((end - start)//60)} minutes and {round((end - start)%60, 3)} seconds.")
 
 
 
