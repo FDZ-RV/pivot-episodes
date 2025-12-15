@@ -2,7 +2,6 @@
 # Imports
 #######################################################################################################################
 import pandas as pd
-from pandas.api.types import CategoricalDtype
 import polars as pl
 import time
 from pathlib import Path
@@ -384,6 +383,7 @@ res = merge_into_full_timeline(2023, df_list)
 
 end = time.time()
 print(f"Run took {int((end - start)//60)} minutes and {round((end - start)%60, 3)} seconds.")
+
 
 
 
