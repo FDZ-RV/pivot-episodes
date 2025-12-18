@@ -174,15 +174,14 @@ def pivot_episodes(df: pl.DataFrame) -> pl.DataFrame:
 def generate_status(df: pl.DataFrame, names_and_vars: list[str]) -> pl.DataFrame:
     ''' Generates timeline format for a single state/status.
     :param df: pl.DataFrame in timeline format, output of pivot_episodes().
-    :param names_and_vars: list of the form ["name", "state", "variables"] where "state" is the state considered
-    and "name" specifies how the status variables are called (ie name_TAGE etc.) and "variables" are a subset of 
-    {TAGE, EGPT, ZREG}.
+    :param state: which state to consider.
+    :param name: how the status will be named, ie STATUS_name.
+    :vars: list of the form variables to consider, subset of {TAGE, EGPT, ZREG}.
     :return: pl.DataFrame with cols FDZ_ID, JAHR, MONAT, TAGE, name_TAGE, name_EGPT etc.
     '''
-    name = names_and_vars.pop(0)  # pop specified name from list
-    state = names_and_vars.pop(0)  # pop state to consider
+	
     standard_cols = ["FDZ_ID", "JAHR", "MONAT", "TAGE"]
-    additional_cols = [f"{variable.lower()}" for variable in names_and_vars]
+    additional_cols = [f"{variable.lower()}" for variable in vars]
     cols_to_keep = standard_cols + additional_cols
 
     df_state = df.filter(pl.col("state") == state)
@@ -213,9 +212,6 @@ def generate_status_1_and_NJB(df: pl.DataFrame) -> tuple[pl.DataFrame]:
             pl.col("zreg_daily").sort_by("zreg_daily", descending=True).head(6).alias("top3_zreg_daily")
         ])
     )
-
-    check = top3.select("top3_states").with_columns( length = pl.col("top3_states").list.len())
-    print(check["length"].value_counts())
 
     # create df for STATUS_1
     df_status1 = top3.with_columns([
@@ -375,14 +371,15 @@ df_list = []
 df_status1,df = generate_status_1_and_NJB(df)
 df_list.append(df_status1)
 df_list.append(generate_multiple_ordered_status(df, 2, state_order))
-df_list.append(generate_status(df, ["STATUS_4", "GF0", "TAGE"]))
-df_list.append(generate_status(df, ["STATUS_5", "GF1", "TAGE", "EGPT"]))
+df_list.append(generate_status(df, "GF0", "STATUS_4", ["TAGE"]))
+df_list.append(generate_status(df, "GF1", "STATUS_5", ["TAGE", "EGPT"]))
 
 print("Merging everything into timeline...")
 res = merge_into_full_timeline(2023, df_list)
 
 end = time.time()
 print(f"Run took {int((end - start)//60)} minutes and {round((end - start)%60, 3)} seconds.")
+
 
 
 
